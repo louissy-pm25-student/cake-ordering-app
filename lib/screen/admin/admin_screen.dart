@@ -1,8 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:file_selector/file_selector.dart';
 
 import '../../model/admin/admin_record.dart';
 import '../../model/admin/admin_schema.dart';
@@ -77,67 +75,9 @@ class _AdminScreenState extends State<AdminScreen> {
     return result;
   }
 
-  Future<void> _receipt(AdminRecord order) async {
-    final text = vm.receipt(order);
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Receipt ${order.id}'),
-        content: SizedBox(
-          width: 500,
-          child: SingleChildScrollView(child: SelectableText(text)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: text));
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Receipt copied.')),
-                );
-              }
-            },
-            child: const Text('Copy'),
-          ),
-          TextButton(
-            onPressed: () async {
-              try {
-                final location = await getSaveLocation(
-                  suggestedName: 'receipt-${order.id}.txt',
-                );
-                if (location != null) {
-                  await XFile.fromData(
-                    Uint8List.fromList(utf8.encode(text)),
-                    mimeType: 'text/plain',
-                  ).saveTo(location.path);
-                }
-              } catch (_) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'File saving is unavailable here. Use Copy.',
-                      ),
-                    ),
-                  );
-                }
-              }
-            },
-            child: const Text('Save .txt'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _schedule(AdminRecord order) async {
     final driver = TextEditingController(text: order.text('driver'));
     final date = TextEditingController(text: order.text('date'));
-    final slot = TextEditingController(text: order.text('slot'));
     String? error;
     await showDialog<void>(
       context: context,
@@ -155,29 +95,6 @@ class _AdminScreenState extends State<AdminScreen> {
                     decoration: const InputDecoration(
                       labelText: 'Date (YYYY-MM-DD)',
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: vm.record('slots', slot.text) != null
-                        ? slot.text
-                        : '',
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Time slot'),
-                    items: [
-                      const DropdownMenuItem(value: '', child: Text('None')),
-                      ...vm
-                          .records('slots')
-                          .map(
-                            (r) => DropdownMenuItem(
-                              value: r.id,
-                              child: Text(
-                                '${r.text('date')} ${r.text('name')}',
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ),
-                    ],
-                    onChanged: (v) => slot.text = v ?? '',
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
@@ -221,7 +138,6 @@ class _AdminScreenState extends State<AdminScreen> {
                         order.id,
                         driver.text,
                         date.text,
-                        slot.text,
                       );
                       if (!context.mounted) return;
                       if (ok) {
@@ -239,7 +155,6 @@ class _AdminScreenState extends State<AdminScreen> {
     await Future<void>.delayed(const Duration(milliseconds: 250));
     driver.dispose();
     date.dispose();
-    slot.dispose();
   }
 
   List<AdminRecord> get _orders => vm
@@ -268,12 +183,11 @@ class _AdminScreenState extends State<AdminScreen> {
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               Chip(label: Text(order.text('status'))),
-              Chip(label: Text(order.text('paymentStatus'))),
             ],
           ),
           Text('${order.text('customer')} · ${order.text('email')}'),
           Text(
-            '${order.text('date')} · ${order.text('fulfilment')} · ${vm.record('slots', order.text('slot'))?.text('name') ?? 'Unscheduled time'}',
+            '${order.text('date')} · ${order.text('fulfilment')}',
             style: const TextStyle(color: CakeStyle.muted),
           ),
           if (order.text('address').isNotEmpty) Text(order.text('address')),
@@ -282,7 +196,7 @@ class _AdminScreenState extends State<AdminScreen> {
               '${value['quantity']} × ${value['name']} · ${value['details'] ?? ''}',
             ),
           Text(
-            '${money(order.number('total'))} · ${order.text('payment')}',
+            money(order.number('total')),
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
           if (order.text('notes').isNotEmpty)
@@ -317,7 +231,6 @@ class _AdminScreenState extends State<AdminScreen> {
                 ),
               if (vm.canWrite('orders') &&
                   order.text('status') == 'pending' &&
-                  order.text('paymentStatus') == 'pending' &&
                   order.text('source') == 'manual')
                 TextButton(
                   onPressed: () =>
@@ -340,59 +253,6 @@ class _AdminScreenState extends State<AdminScreen> {
                     }
                   },
                   child: const Text('Cancel order'),
-                ),
-              if (vm.canFinance &&
-                  order.text('paymentStatus') == 'pending' &&
-                  order.text('status') != 'cancelled')
-                TextButton(
-                  onPressed: () async {
-                    final reference = await _prompt(
-                      'Payment reference / cash receipt',
-                    );
-                    if (reference != null) {
-                      _message(
-                        await vm.paymentAction(order.id, reference: reference),
-                      );
-                    }
-                  },
-                  child: const Text('Record payment'),
-                ),
-              if (vm.canFinance &&
-                  [
-                    'paid',
-                    'refund pending',
-                    'partially refunded',
-                  ].contains(order.text('paymentStatus')))
-                TextButton(
-                  onPressed: () async {
-                    final amount = await _prompt(
-                      'Refund amount',
-                      initial:
-                          (order.number('total') - order.number('refunded'))
-                              .toStringAsFixed(2),
-                      numeric: true,
-                    );
-                    if (amount == null) return;
-                    final reference = await _prompt(
-                      'Refund transaction reference (record only)',
-                    );
-                    if (reference != null) {
-                      _message(
-                        await vm.paymentAction(
-                          order.id,
-                          refund: true,
-                          amount: double.tryParse(amount),
-                          reference: reference,
-                        ),
-                      );
-                    }
-                  },
-                  child: const Text('Record refund'),
-                ),
-              if (vm.canFinance)
-                TextButton(
-                  onPressed: () => _receipt(order),
-                  child: const Text('Receipt'),
                 ),
             ],
           ),
@@ -524,16 +384,6 @@ class _AdminScreenState extends State<AdminScreen> {
                           '${field.label}: ${field.reference == null ? row.text(field.key) : vm.record(field.reference!, row.text(field.key))?.text('name', row.text(field.key)) ?? row.text(field.key)}',
                         ),
                       ),
-                  if (_section == 'ingredients' &&
-                      row.number('stock') <= row.number('minimum'))
-                    const Chip(
-                      label: Text('Low stock'),
-                      backgroundColor: CakeStyle.blush,
-                    ),
-                  if (_section == 'slots')
-                    Text(
-                      'Booked: ${vm.records('orders').where((o) => o.text('slot') == row.id && o.text('status') != 'cancelled').length} / ${row.text('capacity')}',
-                    ),
                   if (_section == 'customers')
                     ...vm
                         .records('orders')
@@ -555,32 +405,31 @@ class _AdminScreenState extends State<AdminScreen> {
                           ),
                           child: const Text('Edit'),
                         ),
-                        if (_section != 'settings')
-                          TextButton(
-                            onPressed: () async {
-                              final confirm = await showDialog<bool>(
-                                context: context,
-                                builder: (c) => AlertDialog(
-                                  title: const Text('Delete this record?'),
-                                  content: Text(row.text('name', row.id)),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(c, false),
-                                      child: const Text('Keep'),
-                                    ),
-                                    FilledButton(
-                                      onPressed: () => Navigator.pop(c, true),
-                                      child: const Text('Delete'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                              if (confirm == true) {
-                                _message(await vm.delete(_section, row.id));
-                              }
-                            },
-                            child: const Text('Delete'),
-                          ),
+                        TextButton(
+                          onPressed: () async {
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (c) => AlertDialog(
+                                title: const Text('Delete this record?'),
+                                content: Text(row.text('name', row.id)),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(c, false),
+                                    child: const Text('Keep'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () => Navigator.pop(c, true),
+                                    child: const Text('Delete'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirm == true) {
+                              _message(await vm.delete(_section, row.id));
+                            }
+                          },
+                          child: const Text('Delete'),
+                        ),
                       ],
                     ),
                 ],
@@ -611,22 +460,8 @@ class _AdminScreenState extends State<AdminScreen> {
               0,
         )
         .toList();
-    final net = inPeriod
-        .where(
-          (o) => [
-            'paid',
-            'refund pending',
-            'partially refunded',
-            'refunded',
-          ].contains(o.text('paymentStatus')),
-        )
-        .fold<double>(
-          0,
-          (n, o) => n + o.number('total') - o.number('refunded'),
-        );
     final best = <String, int>{};
     final hours = <String, int>{};
-    final daily = <String, double>{};
     for (final order in inPeriod.where(
       (o) => o.text('status') != 'cancelled',
     )) {
@@ -640,11 +475,6 @@ class _AdminScreenState extends State<AdminScreen> {
       final date = DateTime.tryParse(order.text('createdAt'));
       if (date != null) {
         hours.update('${date.hour}:00', (n) => n + 1, ifAbsent: () => 1);
-        daily.update(
-          dayKey(date),
-          (n) => n + order.number('total'),
-          ifAbsent: () => order.number('total'),
-        );
       }
     }
     final ranked = best.entries.toList()
@@ -664,9 +494,13 @@ class _AdminScreenState extends State<AdminScreen> {
           (v) => setState(() => _period = v),
         ),
         gap,
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
+        GridView.count(
+          crossAxisCount: 2,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          mainAxisExtent: 112,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
           children: [
             _metric('Orders', '${inPeriod.length}'),
             _metric(
@@ -674,16 +508,9 @@ class _AdminScreenState extends State<AdminScreen> {
               '${orders.where((o) => ['pending', 'baking'].contains(o.text('status'))).length}',
             ),
             _metric('Alerts', '${vm.alerts.length}'),
-            if (vm.canFinance) _metric('Net collected', money(net)),
             _metric('Peak hour', peak.isEmpty ? '—' : peak.first.key),
           ],
         ),
-        gap,
-        if (vm.canFinance)
-          const Text(
-            'Net collected uses payment records on orders created in the selected period, minus recorded refunds. It is not a cash settlement report.',
-            style: TextStyle(color: CakeStyle.muted, fontSize: 12),
-          ),
         gap,
         const Text(
           'Best sellers',
@@ -705,15 +532,6 @@ class _AdminScreenState extends State<AdminScreen> {
               ),
             ),
         gap,
-        if (vm.canFinance) ...[
-          const Text(
-            'Daily booked revenue (excludes cancelled orders)',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          for (final key in daily.keys.toList()..sort())
-            PriceRow(key, money(daily[key]!)),
-        ],
-        gap,
         const Text(
           'Needs attention',
           style: TextStyle(fontFamily: 'serif', fontSize: 20),
@@ -734,20 +552,23 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
-  Widget _metric(String name, String value) => SizedBox(
-    width: 155,
-    child: CakePanel(
-      color: CakeStyle.blush,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
+  Widget _metric(String name, String value) => CakePanel(
+    color: CakeStyle.blush,
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
             value,
             style: const TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
           ),
-          Text(name),
-        ],
-      ),
+        ),
+        const SizedBox(height: 4),
+        Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ],
     ),
   );
   Widget _calendar() => Column(
@@ -759,7 +580,7 @@ class _AdminScreenState extends State<AdminScreen> {
         onDateChanged: (d) => setState(() => _date = dayKey(d)),
       ),
       Text(
-        '${_date ?? vm.today}: ${vm.records('orders').where((r) => r.text('date') == (_date ?? vm.today) && r.text('status') != 'cancelled').length} / ${vm.settings.text('capacity')} orders',
+        '${_date ?? vm.today}: ${vm.records('orders').where((r) => r.text('date') == (_date ?? vm.today) && r.text('status') != 'cancelled').length} orders',
         style: const TextStyle(fontWeight: FontWeight.bold),
       ),
       gap,
@@ -800,47 +621,6 @@ class _AdminScreenState extends State<AdminScreen> {
       ],
     ),
     'calendar' => _calendar(),
-    'finance' => Column(
-      children: [
-        _dashboard(),
-        gap,
-        const Text('Payment & refund ledger'),
-        ...vm
-            .records('payments')
-            .map(
-              (p) => ListTile(
-                title: Text('${p.text('name')} · ${money(p.number('amount'))}'),
-                subtitle: Text(
-                  '${p.text('order')}\n${p.text('reference')} · ${p.text('date')}',
-                ),
-              ),
-            ),
-        gap,
-        const Text('Orders awaiting payment or refund'),
-        ...vm
-            .records('orders')
-            .where(
-              (o) => [
-                'pending',
-                'refund pending',
-              ].contains(o.text('paymentStatus')),
-            )
-            .map(_orderCard),
-      ],
-    ),
-    'logs' => Column(
-      children: vm
-          .records('logs')
-          .map(
-            (r) => ListTile(
-              title: Text(r.text('name')),
-              subtitle: Text(
-                '${r.text('actor')} · ${r.text('date')}\n${r.text('target')}',
-              ),
-            ),
-          )
-          .toList(),
-    ),
     'notifications' => Column(
       children: [
         if (vm.alerts.isEmpty)
@@ -876,8 +656,6 @@ class _AdminScreenState extends State<AdminScreen> {
       ))
         s.key: s.title,
       'calendar': 'Production calendar',
-      'finance': 'Payments & reports',
-      'logs': 'Activity log',
       'notifications': 'Notifications',
       'profile': 'Profile',
     };
@@ -886,14 +664,10 @@ class _AdminScreenState extends State<AdminScreen> {
       'orders': Icons.receipt_long_outlined,
       'products': Icons.cake_outlined,
       'calendar': Icons.calendar_month_outlined,
-      'finance': Icons.payments_outlined,
-      'logs': Icons.history,
       'notifications': Icons.notifications_outlined,
       'profile': Icons.account_circle_outlined,
-      'ingredients': Icons.inventory_2_outlined,
       'customers': Icons.people_outline,
       'staff': Icons.badge_outlined,
-      'settings': Icons.settings_outlined,
       'drivers': Icons.local_shipping_outlined,
     };
     return ListenableBuilder(
@@ -1010,10 +784,10 @@ class _AdminScreenState extends State<AdminScreen> {
                           context,
                           vm,
                           _section,
-                          record: _section == 'settings' ? vm.settings : null,
+                          record: null,
                         ),
                   icon: const Icon(Icons.add),
-                  label: Text(_section == 'settings' ? 'Edit settings' : 'Add'),
+                  label: const Text('Add'),
                 )
               : null,
         ),

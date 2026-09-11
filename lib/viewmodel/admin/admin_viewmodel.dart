@@ -35,20 +35,8 @@ class AdminViewModel extends ChangeNotifier {
     return null;
   }
 
-  AdminRecord get settings => records('settings').first;
   void load(Map<String, dynamic> data) {
     _data = jsonDecode(jsonEncode(data)) as Map<String, dynamic>;
-    if (_rows(_data, 'settings').isEmpty) {
-      _data['settings'] = [
-        AdminRecord('store', {
-          'name': 'Sweet Studio',
-          'tax': 0,
-          'capacity': 20,
-          'address': '',
-          'taxId': '',
-        }).toJson(),
-      ];
-    }
     if (!_data.containsKey('codes')) {
       _data['codes'] = [
         AdminRecord('sweet10', {
@@ -119,10 +107,7 @@ class AdminViewModel extends ChangeNotifier {
               [
                 'dashboard',
                 'orders',
-                'ingredients',
-                'recipes',
                 'requests',
-                'slots',
                 'calendar',
                 'notifications',
               ].contains(section) ||
@@ -136,7 +121,6 @@ class AdminViewModel extends ChangeNotifier {
                 'requests',
                 'reviews',
                 'calendar',
-                'slots',
                 'zones',
                 'drivers',
                 'notifications',
@@ -145,8 +129,8 @@ class AdminViewModel extends ChangeNotifier {
       signedIn &&
       (section == 'profile' ||
           role == 'owner' ||
-          role == 'manager' && !['staff', 'settings'].contains(section) ||
-          role == 'baker' && ['ingredients', 'requests'].contains(section) ||
+          role == 'manager' && section != 'staff' ||
+          role == 'baker' && section == 'requests' ||
           role == 'staff' &&
               ['orders', 'customers', 'requests', 'reviews'].contains(section));
   bool get canChangeStatus => signedIn;
@@ -245,7 +229,6 @@ class AdminViewModel extends ChangeNotifier {
           person!.patch({'username': name, 'credential': credential.toJson()}),
         );
       }
-      _log(candidate, 'Updated own login profile', name);
       if (!await _commit(candidate)) return false;
       _username = name;
       return true;
@@ -279,21 +262,6 @@ class AdminViewModel extends ChangeNotifier {
     data[section] = rows.map((r) => r.toJson()).toList();
   }
 
-  void _log(
-    Map<String, dynamic> data,
-    String action,
-    String target, {
-    String? actor,
-  }) => _put(
-    data,
-    'logs',
-    AdminRecord(_id(), {
-      'name': action,
-      'target': target,
-      'actor': actor ?? username,
-      'date': DateTime.now().toIso8601String(),
-    }),
-  );
   void _notify(
     Map<String, dynamic> data,
     String message, {
@@ -377,32 +345,9 @@ class AdminViewModel extends ChangeNotifier {
         return _fail('Use YYYY-MM-DD for ${field.label}.');
       }
     }
-    if (['settings', 'codes'].contains(section) &&
-        (double.tryParse(
-                  '${values[section == 'settings' ? 'tax' : 'percent']}',
-                ) ??
-                0) >
-            100) {
+    if (section == 'codes' &&
+        (double.tryParse('${values['percent']}') ?? 0) > 100) {
       return _fail('Percentage cannot exceed 100.');
-    }
-    if (['settings', 'slots'].contains(section) &&
-        (int.tryParse('${values['capacity']}') ?? 0) < 1) {
-      return _fail('Capacity must be at least one.');
-    }
-    if (section == 'recipes' &&
-        (double.tryParse('${values['amount']}') ?? 0) <= 0) {
-      return _fail('Recipe amount must be positive.');
-    }
-    if (section == 'recipes' &&
-        records(section).any(
-          (r) =>
-              r.id != id &&
-              r.text('product') == values['product'] &&
-              r.text('ingredient') == values['ingredient'],
-        )) {
-      return _fail(
-        'That ingredient already has a recipe row for this cake. Edit it instead.',
-      );
     }
     final clean = Map<String, dynamic>.from(values);
     if (section == 'codes') {
@@ -445,20 +390,8 @@ class AdminViewModel extends ChangeNotifier {
       clean['username'] = name;
     }
     final candidate = toJson();
-    final row = AdminRecord(
-      section == 'settings' ? 'store' : id ?? _id(),
-      clean,
-    );
+    final row = AdminRecord(id ?? _id(), clean);
     _put(candidate, section, row);
-    _log(
-      candidate,
-      id == null ? 'Created $section' : 'Edited $section',
-      row.id,
-    );
-    if (section == 'ingredients' &&
-        row.number('stock') <= row.number('minimum')) {
-      _notify(candidate, 'Low stock: ${row.text('name')}');
-    }
     if (section == 'requests' || section == 'reviews') {
       _notify(
         candidate,
@@ -470,18 +403,8 @@ class AdminViewModel extends ChangeNotifier {
   }
 
   Future<bool> delete(String section, String id) async {
-    if (busy ||
-        !canWrite(section) ||
-        ['orders', 'settings'].contains(section)) {
+    if (busy || !canWrite(section) || section == 'orders') {
       return _fail('This record cannot be deleted.');
-    }
-    if (section == 'ingredients' &&
-        records(
-          'orders',
-        ).any((o) => (o.values['allocations'] as Map? ?? {}).containsKey(id))) {
-      return _fail(
-        'This ingredient is referenced by order history. Keep its stock record.',
-      );
     }
     for (final schema in adminSections) {
       for (final field in schema.fields.where((f) => f.reference == section)) {
@@ -494,49 +417,7 @@ class AdminViewModel extends ChangeNotifier {
     final row = record(section, id);
     if (row == null) return false;
     _put(candidate, section, row.patch({'deleted': true}));
-    _log(candidate, 'Deleted $section', id);
     return await _commit(candidate);
-  }
-
-  Map<String, double> _allocations(List<Map<String, dynamic>> items) {
-    final amounts = <String, double>{};
-    for (final item in items) {
-      for (final recipe in records(
-        'recipes',
-      ).where((r) => r.text('product') == item['product'])) {
-        amounts.update(
-          recipe.text('ingredient'),
-          (n) => n + recipe.number('amount') * (item['quantity'] as num),
-          ifAbsent: () => recipe.number('amount') * (item['quantity'] as num),
-        );
-      }
-    }
-    return amounts;
-  }
-
-  void _adjustStock(
-    Map<String, dynamic> data,
-    Map<String, double> allocations,
-    double sign,
-  ) {
-    for (final entry in allocations.entries) {
-      final ingredient = _rows(
-        data,
-        'ingredients',
-      ).firstWhere((r) => r.id == entry.key);
-      final next = ingredient.number('stock') + entry.value * sign;
-      if (next < -0.000001) {
-        throw StateError('Not enough ${ingredient.text('name')} in stock.');
-      }
-      _put(
-        data,
-        'ingredients',
-        ingredient.patch({'stock': next < 0 ? 0 : next}),
-      );
-      if (sign < 0 && next <= ingredient.number('minimum')) {
-        _notify(data, 'Low stock: ${ingredient.text('name')}');
-      }
-    }
   }
 
   double discountFor(String code, double subtotal, String email) {
@@ -559,45 +440,11 @@ class AdminViewModel extends ChangeNotifier {
 
   double feeFor(String fulfilment, String zone) =>
       fulfilment == 'delivery' ? record('zones', zone)?.number('fee') ?? 0 : 0;
-  void _validateBooking(
-    Map<String, dynamic> data,
-    String date,
-    String slot,
-    String fulfilment,
-    String zone, {
-    String? exclude,
-  }) {
+  void _validateBooking(String date, String fulfilment, String zone) {
     if (DateTime.tryParse(date) == null ||
         dayKey(DateTime.parse(date)) != date ||
         date.compareTo(today) < 0) {
       throw StateError('Select today or a future fulfilment date.');
-    }
-    final orders = _rows(data, 'orders').where(
-      (r) =>
-          r.id != exclude &&
-          r.text('status') != 'cancelled' &&
-          r.text('date') == date,
-    );
-    if (orders.length >= settings.number('capacity')) {
-      throw StateError('Daily production capacity is full.');
-    }
-    final openSlots = records('slots')
-        .where((r) => r.flag('active') && r.text('date') == date)
-        .toList();
-    if (openSlots.isNotEmpty && slot.isEmpty) {
-      throw StateError('Select a time slot.');
-    }
-    if (slot.isNotEmpty) {
-      final selected = record('slots', slot);
-      if (selected == null ||
-          !selected.flag('active') ||
-          selected.text('date') != date) {
-        throw StateError('This time slot is not available on that date.');
-      }
-      if (orders.where((r) => r.text('slot') == slot).length >=
-          selected.number('capacity')) {
-        throw StateError('This time slot is full.');
-      }
     }
     if (fulfilment == 'delivery' &&
         (record('zones', zone)?.flag('active') != true)) {
@@ -612,21 +459,12 @@ class AdminViewModel extends ChangeNotifier {
     if (busy || !canWrite('orders')) {
       return _fail('Your role cannot create or edit orders.');
     }
-    if (values['paymentStatus'] == 'paid' && !canFinance) {
-      return _fail('Only owner or manager can record a paid order.');
-    }
-    if (!['pending', 'paid'].contains(values['paymentStatus']) ||
-        !['cash', 'card', 'online transfer'].contains(values['payment']) ||
-        !['pickup', 'delivery'].contains(values['fulfilment'])) {
-      return _fail('Select valid payment and fulfilment options.');
+    if (!['pickup', 'delivery'].contains(values['fulfilment'])) {
+      return _fail('Select a valid fulfilment option.');
     }
     final old = id == null ? null : record('orders', id);
-    if (old != null &&
-        (old.text('status') != 'pending' ||
-            old.text('paymentStatus') != 'pending')) {
-      return _fail(
-        'Only unpaid pending orders can be edited. Cancel/refund other orders.',
-      );
+    if (old != null && old.text('status') != 'pending') {
+      return _fail('Only pending orders can be edited.');
     }
     if (old != null && old.text('source') != 'manual') {
       return _fail(
@@ -665,6 +503,8 @@ class AdminViewModel extends ChangeNotifier {
       {
         ...values,
         'source': 'manual',
+        'payment': 'not tracked',
+        'paymentStatus': 'not tracked',
         'items': [item],
       },
       id: id,
@@ -676,15 +516,13 @@ class AdminViewModel extends ChangeNotifier {
     Map<String, dynamic> values, {
     String? id,
     AdminRecord? old,
-    String? customerActor,
   }) async {
     final candidate = toJson();
     try {
       final date = '${values['date']}';
-      final slot = '${values['slot'] ?? ''}';
       final fulfilment = '${values['fulfilment'] ?? 'pickup'}';
       final zone = '${values['zone'] ?? ''}';
-      _validateBooking(candidate, date, slot, fulfilment, zone, exclude: id);
+      _validateBooking(date, fulfilment, zone);
       if (fulfilment == 'delivery' &&
           '${values['address'] ?? ''}'.trim().length < 10) {
         throw StateError('Enter a full delivery address.');
@@ -697,16 +535,6 @@ class AdminViewModel extends ChangeNotifier {
       final items = (values['items'] as List)
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
-      if (old != null) {
-        _adjustStock(
-          candidate,
-          Map<String, dynamic>.from(old.values['allocations'] as Map? ?? {})
-              .map((k, v) => MapEntry(k, (v as num).toDouble())),
-          1,
-        );
-      }
-      final allocations = _allocations(items);
-      _adjustStock(candidate, allocations, -1);
       final subtotal = items.fold<double>(
         0,
         (n, i) => n + (i['price'] as num) * (i['quantity'] as num),
@@ -717,50 +545,28 @@ class AdminViewModel extends ChangeNotifier {
         '${values['email'] ?? ''}',
       );
       final fee = feeFor(fulfilment, zone);
-      final tax = (subtotal - discount + fee) * settings.number('tax') / 100;
       final total = double.parse(
-        (subtotal - discount + fee + tax).toStringAsFixed(2),
+        (subtotal - discount + fee).toStringAsFixed(2),
       );
       final order = AdminRecord(id ?? 'SS-${_id()}', {
         ...values,
         'status': 'pending',
         'createdAt': old?.text('createdAt') ?? DateTime.now().toIso8601String(),
         'date': date,
-        'slot': slot,
+        'slot': '',
         'fulfilment': fulfilment,
         'zone': zone,
         'subtotal': subtotal,
         'discount': discount,
         'fee': fee,
-        'taxRate': settings.number('tax'),
-        'taxAmount': tax,
+        'taxRate': 0,
+        'taxAmount': 0,
         'total': total,
         'refunded': 0,
         'paymentStatus': values['paymentStatus'] ?? 'pending',
-        'allocations': allocations,
+        'allocations': <String, dynamic>{},
       });
       _put(candidate, 'orders', order);
-      if (order.text('paymentStatus') == 'paid') {
-        _put(
-          candidate,
-          'payments',
-          AdminRecord(_id(), {
-            'name': 'Payment',
-            'order': order.id,
-            'amount': total,
-            'reference': 'Manual receipt ${order.id}',
-            'method': order.text('payment'),
-            'actor': username,
-            'date': DateTime.now().toIso8601String(),
-          }),
-        );
-      }
-      _log(
-        candidate,
-        old == null ? 'Created order' : 'Edited order',
-        order.id,
-        actor: customerActor,
-      );
       _notify(candidate, 'New order ${order.id}');
       _notify(
         candidate,
@@ -830,7 +636,7 @@ class AdminViewModel extends ChangeNotifier {
       'items': items,
       'source': 'online',
       'paymentStatus': 'pending',
-    }, customerActor: '${values['email']}');
+    });
   }
 
   Future<bool> updateStatus(String id, String status) async {
@@ -861,7 +667,6 @@ class AdminViewModel extends ChangeNotifier {
         );
       }
     }
-    _log(candidate, 'Status → $status', id);
     _notify(
       candidate,
       'Order $id is $status.',
@@ -881,26 +686,15 @@ class AdminViewModel extends ChangeNotifier {
       return _fail('This order cannot be cancelled.');
     }
     final candidate = toJson();
-    if (order.text('status') == 'pending') {
-      _adjustStock(
-        candidate,
-        Map<String, dynamic>.from(order.values['allocations'] as Map? ?? {})
-            .map((k, v) => MapEntry(k, (v as num).toDouble())),
-        1,
-      );
-    }
     _put(
       candidate,
       'orders',
       order.patch({
         'status': 'cancelled',
         'cancellation': reason,
-        'paymentStatus': order.text('paymentStatus') == 'paid'
-            ? 'refund pending'
-            : order.text('paymentStatus'),
+        'paymentStatus': 'not tracked',
       }),
     );
-    _log(candidate, 'Cancelled: $reason', id);
     _notify(
       candidate,
       'Order $id was cancelled: $reason',
@@ -910,81 +704,7 @@ class AdminViewModel extends ChangeNotifier {
     return await _commit(candidate);
   }
 
-  Future<bool> paymentAction(
-    String id, {
-    bool refund = false,
-    String reference = '',
-    double? amount,
-  }) async {
-    if (busy || !canFinance) {
-      return _fail('Only owner or manager can record payments/refunds.');
-    }
-    final order = record('orders', id);
-    if (order == null) return false;
-    if (reference.trim().isEmpty) {
-      return _fail('Enter a payment/refund reference.');
-    }
-    if (!refund &&
-        (order.text('paymentStatus') != 'pending' ||
-            order.text('status') == 'cancelled')) {
-      return _fail('Payment already recorded or order cancelled.');
-    }
-    if (refund &&
-        (![
-              'paid',
-              'refund pending',
-              'partially refunded',
-            ].contains(order.text('paymentStatus')) ||
-            amount == null ||
-            amount <= 0 ||
-            amount > order.number('total') - order.number('refunded'))) {
-      return _fail(
-        'Refund must be positive and no more than the remaining paid amount.',
-      );
-    }
-    final candidate = toJson();
-    final refunded = order.number('refunded') + (refund ? amount! : 0);
-    _put(
-      candidate,
-      'orders',
-      order.patch({
-        'paymentStatus': refund
-            ? refunded >= order.number('total')
-                  ? 'refunded'
-                  : 'partially refunded'
-            : 'paid',
-        'refunded': refunded,
-      }),
-    );
-    _put(
-      candidate,
-      'payments',
-      AdminRecord(_id(), {
-        'name': refund ? 'Refund' : 'Payment',
-        'order': id,
-        'amount': refund ? amount : order.number('total'),
-        'reference': reference,
-        'method': order.text('payment'),
-        'actor': username,
-        'date': DateTime.now().toIso8601String(),
-      }),
-    );
-    _log(candidate, refund ? 'Recorded refund' : 'Recorded payment', id);
-    _notify(
-      candidate,
-      refund ? 'Refund recorded for $id.' : 'Payment recorded for $id.',
-      email: order.text('email'),
-      order: id,
-    );
-    return await _commit(candidate);
-  }
-
-  Future<bool> assignDelivery(
-    String id,
-    String driver,
-    String date,
-    String slot,
-  ) async {
+  Future<bool> assignDelivery(String id, String driver, String date) async {
     if (busy || !canWrite('orders')) {
       return _fail('Your role cannot schedule orders.');
     }
@@ -998,14 +718,7 @@ class AdminViewModel extends ChangeNotifier {
       return _fail('Driver is not available.');
     }
     try {
-      _validateBooking(
-        _data,
-        date,
-        slot,
-        order.text('fulfilment'),
-        order.text('zone'),
-        exclude: id,
-      );
+      _validateBooking(date, order.text('fulfilment'), order.text('zone'));
     } on StateError catch (e) {
       return _fail(e.message);
     }
@@ -1013,9 +726,8 @@ class AdminViewModel extends ChangeNotifier {
     _put(
       candidate,
       'orders',
-      order.patch({'driver': driver, 'date': date, 'slot': slot}),
+      order.patch({'driver': driver, 'date': date, 'slot': ''}),
     );
-    _log(candidate, 'Updated schedule / driver', id);
     _notify(
       candidate,
       'Delivery/pickup schedule updated for $id: $date.',
@@ -1028,14 +740,6 @@ class AdminViewModel extends ChangeNotifier {
   List<AdminRecord> get alerts => [
     ...records('notifications')
         .where((r) => r.text('email').isEmpty && !r.flag('read')),
-    ...records('ingredients')
-        .where((r) => r.number('stock') <= r.number('minimum'))
-        .map(
-          (r) => AdminRecord('low-${r.id}', {
-            'name':
-                'Low stock: ${r.text('name')} (${r.text('stock')} ${r.text('unit')})',
-          }),
-        ),
     ...records('orders')
         .where(
           (r) =>
@@ -1091,7 +795,6 @@ class AdminViewModel extends ChangeNotifier {
       }),
     );
     _notify(candidate, 'New custom cake request from $name');
-    _log(candidate, 'Submitted custom request', id, actor: email);
     return await _commit(candidate);
   }
 
@@ -1155,12 +858,5 @@ class AdminViewModel extends ChangeNotifier {
       }),
     );
     return await _commit(candidate);
-  }
-
-  String receipt(AdminRecord order) {
-    final items = (order.values['items'] as List? ?? []).map(
-      (e) => Map<String, dynamic>.from(e as Map),
-    );
-    return '${settings.text('name')}\n${settings.text('address')}\nTax ID: ${settings.text('taxId')}\n\nINVOICE / RECEIPT ${order.id}\nCreated: ${order.text('createdAt')}\nCustomer: ${order.text('customer')}\n${order.text('email')}\n${order.text('address')}\n\n${items.map((i) => '${i['quantity']} × ${i['name']} @ \$${(i['price'] as num).toStringAsFixed(2)}').join('\n')}\n\nSubtotal: \$${order.number('subtotal').toStringAsFixed(2)}\nDiscount: \$${order.number('discount').toStringAsFixed(2)}\nDelivery: \$${order.number('fee').toStringAsFixed(2)}\nTax (${order.text('taxRate')}%): \$${order.number('taxAmount').toStringAsFixed(2)}\nTotal: \$${order.number('total').toStringAsFixed(2)}\nPayment: ${order.text('payment')} / ${order.text('paymentStatus')}\nRefunded: \$${order.number('refunded').toStringAsFixed(2)}\n\nLocal record. No payment is processed by this app.';
   }
 }

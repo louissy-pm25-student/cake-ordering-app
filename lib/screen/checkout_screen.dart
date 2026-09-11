@@ -144,7 +144,6 @@ class CheckoutScreen extends StatelessWidget {
             children: [
               PriceRow('Subtotal', money(vm.subtotal)),
               PriceRow('Delivery', money(vm.deliveryFee)),
-              PriceRow('Tax', money(vm.taxAmount)),
               if (vm.promoApplied)
                 PriceRow('Sweet discount', '−${money(vm.discount)}'),
               const Divider(),

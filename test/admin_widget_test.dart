@@ -36,6 +36,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Dashboard'), findsOneWidget);
       expect(find.byType(NavigationBar), findsNothing);
+      final metrics = tester.widget<GridView>(find.byType(GridView).first);
+      final delegate =
+          metrics.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
+      expect(delegate.crossAxisCount, 2);
       await tester.tap(find.byTooltip('Open admin menu'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('admin-nav-products')));

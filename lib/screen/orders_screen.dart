@@ -156,11 +156,6 @@ class OrdersScreen extends StatelessWidget {
                       ),
                     ),
                   Text('${record.text('date')} · ${record.text('fulfilment')}'),
-                  Text('Payment: ${record.text('paymentStatus')}'),
-                  if (record.number('refunded') > 0)
-                    Text(
-                      'Refund recorded: ${money(record.number('refunded'))}',
-                    ),
                   if (record.text('driver').isNotEmpty)
                     Text(
                       'Driver: ${vm.admin.record('drivers', record.text('driver'))?.text('name') ?? ''}',
@@ -215,7 +210,7 @@ class OrdersScreen extends StatelessWidget {
             ),
           ),
       const Text(
-        'Status and payment records are managed locally by the bakery admin. No external courier or payment service is connected.',
+        'Order status is managed locally by the bakery admin. No external courier service is connected.',
         style: TextStyle(color: CakeStyle.muted, fontSize: 12),
       ),
     ],

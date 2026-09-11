@@ -9,10 +9,6 @@ class CheckoutSchedule extends StatelessWidget {
   const CheckoutSchedule(this.vm, {super.key});
   @override
   Widget build(BuildContext context) {
-    final slots = vm.admin
-        .records('slots')
-        .where((s) => s.flag('active') && s.text('date') == vm.fulfilmentDate)
-        .toList();
     final zones = vm.admin
         .records('zones')
         .where((s) => s.flag('active'))
@@ -47,23 +43,6 @@ class CheckoutSchedule extends StatelessWidget {
           label: Text('Date: ${vm.fulfilmentDate}'),
         ),
         gap,
-        if (slots.isNotEmpty)
-          DropdownButtonFormField<String>(
-            key: ValueKey('slot-${vm.fulfilmentDate}'),
-            initialValue: slots.any((s) => s.id == vm.slot) ? vm.slot : null,
-            decoration: const InputDecoration(labelText: 'Time slot'),
-            items: slots
-                .map(
-                  (s) => DropdownMenuItem(
-                    value: s.id,
-                    child: Text(
-                      '${s.text('name')} (${s.text('capacity')} order capacity)',
-                    ),
-                  ),
-                )
-                .toList(),
-            onChanged: (s) => vm.setSlot(s ?? ''),
-          ),
         if (vm.fulfilment == 'delivery') ...[
           gap,
           DropdownButtonFormField<String>(

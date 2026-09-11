@@ -35,7 +35,7 @@ class CakeViewModel extends ChangeNotifier {
     });
   }
 
-  String fulfilment = 'pickup', zone = '', slot = '', orderNotes = '';
+  String fulfilment = 'pickup', zone = '', orderNotes = '';
   String fulfilmentDate = dayKey(DateTime.now());
   bool get isAdmin => admin.signedIn;
   void exitAdmin() {
@@ -54,20 +54,12 @@ class CakeViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setSlot(String value) {
-    slot = value;
-    notifyListeners();
-  }
-
   void setOrderDate(String value) {
     fulfilmentDate = value;
-    slot = '';
     notifyListeners();
   }
 
   double get deliveryFee => admin.feeFor(fulfilment, zone);
-  double get taxAmount =>
-      (subtotal - discount + deliveryFee) * admin.settings.number('tax') / 100;
   List<AdminRecord> get customerNotifications => admin
       .records('notifications')
       .where((r) => r.text('email') == email && email.isNotEmpty)
@@ -139,9 +131,8 @@ class CakeViewModel extends ChangeNotifier {
       _cart.fold(0.0, (sum, item) => sum + item.price * item.quantity);
   double get discount =>
       _promoApplied ? admin.discountFor(_promo, subtotal, email) : 0;
-  double get total => double.parse(
-    (subtotal - discount + deliveryFee + taxAmount).toStringAsFixed(2),
-  );
+  double get total =>
+      double.parse((subtotal - discount + deliveryFee).toStringAsFixed(2));
   bool get canPlaceOrder =>
       isLoggedIn &&
       _cart.isNotEmpty &&
@@ -550,7 +541,7 @@ class CakeViewModel extends ChangeNotifier {
       'address': _profile.address,
       'payment': _payment,
       'date': fulfilmentDate,
-      'slot': slot,
+      'slot': '',
       'fulfilment': fulfilment,
       'zone': zone,
       'notes': orderNotes,
