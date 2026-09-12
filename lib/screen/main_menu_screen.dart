@@ -124,7 +124,7 @@ class MainMenuScreen extends StatelessWidget {
                 SizedBox(height: 8),
                 Text(
                   'Something sweet for\nevery celebration.',
-                  style: TextStyle(fontFamily: 'serif', fontSize: 26),
+                  style: TextStyle(fontFamily: 'serif', fontSize: 23),
                 ),
               ],
             ),
@@ -137,7 +137,7 @@ class MainMenuScreen extends StatelessWidget {
                 home ? 'Popular cakes' : 'Fresh from our oven',
                 style: const TextStyle(
                   fontFamily: 'serif',
-                  fontSize: 23,
+                  fontSize: 20,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -198,7 +198,7 @@ class MainMenuScreen extends StatelessWidget {
                                     cake.name,
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w600,
-                                      fontSize: 15,
+                                      fontSize: 14,
                                     ),
                                   ),
                                   const SizedBox(height: 7),
@@ -220,7 +220,7 @@ class MainMenuScreen extends StatelessWidget {
                                       Text(
                                         money(cake.price),
                                         style: const TextStyle(
-                                          fontSize: 17,
+                                          fontSize: 15,
                                           fontWeight: FontWeight.bold,
                                         ),
                                       ),

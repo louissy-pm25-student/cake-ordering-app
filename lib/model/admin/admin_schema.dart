@@ -180,8 +180,8 @@ const adminSections = <AdminSection>[
   ),
   AdminSection(
     'staff',
-    'Team & roles',
-    'Owner controls access. Usernames are unique.',
+    'Admin accounts',
+    'Only signed-in administrators can create accounts. Usernames are unique.',
     [
       AdminField('name', 'Staff name', required: true),
       AdminField('username', 'Username', required: true),
@@ -190,7 +190,11 @@ const adminSections = <AdminSection>[
         'Password (leave blank to keep)',
         type: 'password',
       ),
-      AdminField('role', 'Role', options: ['manager', 'baker', 'staff']),
+      AdminField(
+        'role',
+        'Role',
+        options: ['admin', 'manager', 'baker', 'staff'],
+      ),
       AdminField('active', 'Active', type: 'bool'),
     ],
   ),

@@ -24,7 +24,7 @@ void main() {
       await tester.tap(find.text('Profile'));
       await tester.pumpAndSettle();
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Email or admin username'),
+        find.widgetWithText(TextFormField, 'Username'),
         'admin',
       );
       await tester.enterText(
@@ -40,6 +40,16 @@ void main() {
       final delegate =
           metrics.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
       expect(delegate.crossAxisCount, 2);
+      await tester.tap(find.byTooltip('Open admin menu'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('admin-nav-requests')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .getTopLeft(find.text('Design briefs, dietary needs and quotes.'))
+            .dy,
+        lessThan(220),
+      );
       await tester.tap(find.byTooltip('Open admin menu'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('admin-nav-products')));

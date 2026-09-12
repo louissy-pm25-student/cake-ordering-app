@@ -105,6 +105,34 @@ void main() {
       expect(await vm.updateStatus(id, 'delivered'), false);
     },
   );
+  test('only authenticated administrators can create admin accounts', () async {
+    final vm = AdminViewModel((_) async => true)..load({});
+    expect(
+      await vm.save('staff', {
+        'name': 'Second Admin',
+        'username': 'secondadmin',
+        'password': 'AdminPass123',
+        'role': 'admin',
+        'active': true,
+      }),
+      false,
+    );
+    expect(await vm.login('admin', 'admin123'), true);
+    expect(
+      await vm.save('staff', {
+        'name': 'Second Admin',
+        'username': 'secondadmin',
+        'password': 'AdminPass123',
+        'role': 'admin',
+        'active': true,
+      }),
+      true,
+    );
+    vm.logout();
+    expect(await vm.login('secondadmin', 'AdminPass123'), true);
+    expect(vm.role, 'admin');
+    expect(vm.canWrite('staff'), true);
+  });
   test(
     'customer order reaches admin and updates return to customer after reload',
     () async {
@@ -121,7 +149,7 @@ void main() {
         'price': 29,
         'available': true,
       }, id: 'berry');
-      vm.exitAdmin();
+      await vm.exitAdmin();
       await vm.authenticate(
         email: 'alice@example.com',
         password: 'Password123',
@@ -135,7 +163,7 @@ void main() {
       await vm.logout();
       await vm.authenticate(email: 'admin', password: 'admin123');
       expect(await vm.admin.updateStatus(id, 'baking'), true);
-      vm.exitAdmin();
+      await vm.exitAdmin();
       await vm.authenticate(
         email: 'alice@example.com',
         password: 'Password123',
@@ -157,4 +185,42 @@ void main() {
     expect(await vm.saveManualOrder(manual(vm)), false);
     expect(vm.records('orders'), isEmpty);
   });
+  test(
+    'admin customer deletion removes login and all customer data',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final vm = CakeViewModel(LocalCakeRepository(prefs));
+      await vm.load();
+      await vm.authenticate(
+        email: 'alice@example.com',
+        password: 'Password123',
+        name: 'Alice',
+      );
+      await vm.logout();
+      await vm.authenticate(email: 'admin', password: 'admin123');
+      expect(vm.admin.record('customers', 'alice@example.com'), isNotNull);
+
+      expect(
+        await vm.admin.delete('customers', 'alice@example.com'),
+        true,
+      );
+      expect(vm.admin.record('customers', 'alice@example.com'), isNull);
+      await vm.exitAdmin();
+      await vm.authenticate(
+        email: 'alice@example.com',
+        password: 'Password123',
+      );
+      expect(vm.authError, 'Username or password is incorrect.');
+
+      final reopened = CakeViewModel(LocalCakeRepository(prefs));
+      await reopened.load();
+      expect(reopened.admin.record('customers', 'alice@example.com'), isNull);
+      await reopened.authenticate(
+        email: 'alice@example.com',
+        password: 'Password123',
+      );
+      expect(reopened.authError, 'Username or password is incorrect.');
+    },
+  );
 }

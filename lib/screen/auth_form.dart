@@ -76,7 +76,7 @@ class _AuthFormState extends State<AuthForm> {
                           : 'Welcome\nback, cake lover.',
                       style: const TextStyle(
                         fontFamily: 'serif',
-                        fontSize: 28,
+                        fontSize: 25,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -88,9 +88,9 @@ class _AuthFormState extends State<AuthForm> {
           ),
         ),
         gap,
-        PageTitle(
-          widget.register ? 'Create your account' : 'Log in',
-          'Log in to order cakes, customize a creation and see your orders.',
+        const PageTitle(
+          'Log in',
+          'Use your customer username and password, or enter an admin username.',
         ),
         Form(
           key: _form,
@@ -119,10 +119,8 @@ class _AuthFormState extends State<AuthForm> {
                   autocorrect: false,
                   autofillHints: const [AutofillHints.email],
                   decoration: InputDecoration(
-                    labelText: widget.register
-                        ? 'Email address'
-                        : 'Email or admin username',
-                    prefixIcon: Icon(Icons.mail_outline),
+                    labelText: widget.register ? 'Email address' : 'Username',
+                    prefixIcon: const Icon(Icons.person_outline),
                   ),
                   validator: (v) =>
                       (!widget.register && (v?.trim().isNotEmpty ?? false))
@@ -187,14 +185,28 @@ class _AuthFormState extends State<AuthForm> {
                   ),
                   gap,
                 ],
+                if (vm.authNotice != null) ...[
+                  Text(
+                    vm.authNotice!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Color(0xFF357A38)),
+                  ),
+                  gap,
+                ],
                 PrimaryButton(
-                  vm.busy
-                      ? 'Please wait…'
-                      : widget.register
-                      ? 'Create account'
-                      : 'Log in',
+                  widget.register ? 'Create account' : 'Log in',
                   vm.busy ? null : _submit,
                 ),
+                if (!widget.register)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: vm.busy
+                          ? null
+                          : () => vm.navigate(CakeDestination.forgotPassword),
+                      child: const Text('Forgot password?'),
+                    ),
+                  ),
                 gap,
                 TextButton(
                   onPressed: vm.busy
@@ -210,11 +222,12 @@ class _AuthFormState extends State<AuthForm> {
                         : 'New here? Create an account',
                   ),
                 ),
-                const Text(
-                  'Local demo account · Available only on this device. No online authentication service is connected.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: CakeStyle.muted, fontSize: 11),
-                ),
+                if (vm.usesDevelopmentVerification)
+                  const Text(
+                    'Development verification is active on this device.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: CakeStyle.muted, fontSize: 11),
+                  ),
               ],
             ),
           ),

@@ -12,7 +12,7 @@ import 'admin_profile_screen.dart';
 
 class AdminScreen extends StatefulWidget {
   final AdminViewModel vm;
-  final VoidCallback onLogout;
+  final Future<void> Function() onLogout;
   const AdminScreen(this.vm, {required this.onLogout, super.key});
   @override
   State<AdminScreen> createState() => _AdminScreenState();
@@ -34,12 +34,15 @@ class _AdminScreenState extends State<AdminScreen> {
     });
   }
 
-  void _message(bool ok) {
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(vm.error ?? 'Unable to complete action.')),
-      );
-    }
+  void _message(bool ok, {String? success}) {
+    if (!mounted || ok && success == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok ? success! : vm.error ?? 'Unable to complete action.',
+        ),
+      ),
+    );
   }
 
   Future<String?> _prompt(
@@ -362,7 +365,7 @@ class _AdminScreenState extends State<AdminScreen> {
                     row.text('name', row.text('customer', row.id)),
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
-                      fontSize: 18,
+                      fontSize: 16,
                     ),
                   ),
                   SelectableText(
@@ -410,8 +413,16 @@ class _AdminScreenState extends State<AdminScreen> {
                             final confirm = await showDialog<bool>(
                               context: context,
                               builder: (c) => AlertDialog(
-                                title: const Text('Delete this record?'),
-                                content: Text(row.text('name', row.id)),
+                                title: Text(
+                                  _section == 'customers'
+                                      ? 'Delete this customer account?'
+                                      : 'Delete this record?',
+                                ),
+                                content: Text(
+                                  _section == 'customers'
+                                      ? '${row.text('name', row.id)} and all related orders, requests, reviews and notifications will be permanently deleted.'
+                                      : row.text('name', row.id),
+                                ),
                                 actions: [
                                   TextButton(
                                     onPressed: () => Navigator.pop(c, false),
@@ -425,7 +436,13 @@ class _AdminScreenState extends State<AdminScreen> {
                               ),
                             );
                             if (confirm == true) {
-                              _message(await vm.delete(_section, row.id));
+                              final deleted = await vm.delete(_section, row.id);
+                              _message(
+                                deleted,
+                                success: _section == 'customers'
+                                    ? 'Customer account and data deleted from Supabase.'
+                                    : 'Record deleted.',
+                              );
                             }
                           },
                           child: const Text('Delete'),
@@ -514,7 +531,7 @@ class _AdminScreenState extends State<AdminScreen> {
         gap,
         const Text(
           'Best sellers',
-          style: TextStyle(fontSize: 20, fontFamily: 'serif'),
+          style: TextStyle(fontSize: 18, fontFamily: 'serif'),
         ),
         gap,
         if (ranked.isEmpty)
@@ -534,7 +551,7 @@ class _AdminScreenState extends State<AdminScreen> {
         gap,
         const Text(
           'Needs attention',
-          style: TextStyle(fontFamily: 'serif', fontSize: 20),
+          style: TextStyle(fontFamily: 'serif', fontSize: 18),
         ),
         ...vm.alerts
             .take(8)
@@ -563,7 +580,7 @@ class _AdminScreenState extends State<AdminScreen> {
           alignment: Alignment.centerLeft,
           child: Text(
             value,
-            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
         ),
         const SizedBox(height: 4),
@@ -723,9 +740,9 @@ class _AdminScreenState extends State<AdminScreen> {
                     title: const Text('Log out'),
                     onTap: vm.busy
                         ? null
-                        : () {
+                        : () async {
                             Navigator.of(context).pop();
-                            widget.onLogout();
+                            await widget.onLogout();
                           },
                   ),
                 ],
@@ -759,14 +776,33 @@ class _AdminScreenState extends State<AdminScreen> {
                 constraints: const BoxConstraints(maxWidth: 1100),
                 child: Column(
                   children: [
-                    if (vm.busy) const LinearProgressIndicator(),
                     Expanded(
-                      child: SingleChildScrollView(
-                        key: ValueKey(_section),
-                        padding: const EdgeInsets.fromLTRB(20, 12, 20, 100),
-                        child: vm.canRead(_section)
-                            ? _body()
-                            : const Text('Access denied.'),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        reverseDuration: const Duration(milliseconds: 220),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        layoutBuilder: (current, previous) => Stack(
+                          alignment: Alignment.topCenter,
+                          children: [...previous, ?current],
+                        ),
+                        transitionBuilder: (child, animation) => FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: Tween<Offset>(
+                              begin: const Offset(0.035, 0),
+                              end: Offset.zero,
+                            ).animate(animation),
+                            child: child,
+                          ),
+                        ),
+                        child: SingleChildScrollView(
+                          key: ValueKey(_section),
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 100),
+                          child: vm.canRead(_section)
+                              ? _body()
+                              : const Text('Access denied.'),
+                        ),
                       ),
                     ),
                   ],

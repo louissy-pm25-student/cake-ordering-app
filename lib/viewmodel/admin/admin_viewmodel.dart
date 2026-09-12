@@ -101,7 +101,7 @@ class AdminViewModel extends ChangeNotifier {
   bool canRead(String section) =>
       signedIn &&
       (section == 'profile' ||
-          role == 'owner' ||
+          ['owner', 'admin'].contains(role) ||
           role == 'manager' && section != 'staff' ||
           role == 'baker' &&
               [
@@ -128,13 +128,14 @@ class AdminViewModel extends ChangeNotifier {
   bool canWrite(String section) =>
       signedIn &&
       (section == 'profile' ||
-          role == 'owner' ||
+          ['owner', 'admin'].contains(role) ||
           role == 'manager' && section != 'staff' ||
           role == 'baker' && section == 'requests' ||
           role == 'staff' &&
               ['orders', 'customers', 'requests', 'reviews'].contains(section));
   bool get canChangeStatus => signedIn;
-  bool get canFinance => signedIn && ['owner', 'manager'].contains(role);
+  bool get canFinance =>
+      signedIn && ['owner', 'admin', 'manager'].contains(role);
   Future<bool> login(String username, String password) async {
     if (busy) return false;
     busy = true;
@@ -167,6 +168,26 @@ class AdminViewModel extends ChangeNotifier {
       busy = false;
       notifyListeners();
     }
+  }
+
+  bool restoreSession(String username) {
+    if (username == ownerUsername) {
+      _username = username;
+      _role = 'owner';
+      notifyListeners();
+      return true;
+    }
+    final person = records('staff')
+        .where(
+          (record) =>
+              record.text('username') == username && record.flag('active'),
+        )
+        .firstOrNull;
+    if (person == null) return false;
+    _username = username;
+    _role = person.text('role');
+    notifyListeners();
+    return true;
   }
 
   String get ownerUsername => _data['ownerUsername'] as String? ?? 'admin';
@@ -416,6 +437,30 @@ class AdminViewModel extends ChangeNotifier {
     final candidate = toJson();
     final row = record(section, id);
     if (row == null) return false;
+    if (section == 'customers') {
+      final email = row.text('email').trim().toLowerCase();
+      candidate['customers'] = _rows(candidate, 'customers')
+          .where((customer) => customer.id != id)
+          .map((customer) => customer.toJson())
+          .toList();
+      if (email.isNotEmpty) {
+        for (final relatedSection in [
+          'orders',
+          'requests',
+          'reviews',
+          'notifications',
+        ]) {
+          candidate[relatedSection] = _rows(candidate, relatedSection)
+              .where(
+                (related) =>
+                    related.text('email').trim().toLowerCase() != email,
+              )
+              .map((related) => related.toJson())
+              .toList();
+        }
+      }
+      return await _commit(candidate);
+    }
     _put(candidate, section, row.patch({'deleted': true}));
     return await _commit(candidate);
   }

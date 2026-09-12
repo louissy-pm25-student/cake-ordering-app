@@ -26,5 +26,8 @@ abstract class CakeRepository {
     ),
   ];
   Future<Map<String, dynamic>> load();
-  Future<void> save(Map<String, dynamic> snapshot);
+  Future<void> save(
+    Map<String, dynamic> snapshot, {
+    bool requireRemote = false,
+  });
 }

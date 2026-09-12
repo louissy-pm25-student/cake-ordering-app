@@ -18,7 +18,7 @@ class CheckoutSchedule extends StatelessWidget {
       children: [
         const Text(
           'Pickup or delivery',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
         Choices(const ['pickup', 'delivery'], vm.fulfilment, vm.setFulfilment),
         gap,

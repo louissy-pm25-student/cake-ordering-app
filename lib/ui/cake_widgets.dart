@@ -6,6 +6,59 @@ import 'cake_style.dart';
 
 String money(num value) => '\$${value.toStringAsFixed(2)}';
 
+class AppLoadingOverlay extends StatelessWidget {
+  final Widget child;
+  final bool isLoading;
+
+  const AppLoadingOverlay({
+    required this.child,
+    required this.isLoading,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      child,
+      if (isLoading)
+        Positioned.fill(
+          child: Semantics(
+            label: 'Loading',
+            liveRegion: true,
+            child: AbsorbPointer(
+              child: ColoredBox(
+                color: CakeStyle.ink.withValues(alpha: 0.20),
+                child: Center(
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: CakeStyle.paper,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x24000000),
+                          blurRadius: 24,
+                          offset: Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: const SizedBox(
+                      width: 34,
+                      height: 34,
+                      child: CircularProgressIndicator(strokeWidth: 3),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+    ],
+  );
+}
+
 class CakePhoto extends StatelessWidget {
   final int index;
   final String photoData;
@@ -158,7 +211,7 @@ class EmptyCard extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: const TextStyle(fontSize: 23, fontFamily: 'serif')),
+        Text(title, style: const TextStyle(fontSize: 20, fontFamily: 'serif')),
         const SizedBox(height: 10),
         Text(subtitle),
       ],

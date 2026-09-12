@@ -15,7 +15,10 @@ class LocalCakeRepository implements CakeRepository {
   }
 
   @override
-  Future<void> save(Map<String, dynamic> snapshot) async {
+  Future<void> save(
+    Map<String, dynamic> snapshot, {
+    bool requireRemote = false,
+  }) async {
     if (!await preferences.setString(_key, jsonEncode(snapshot))) {
       throw StateError('Unable to save your cake order.');
     }

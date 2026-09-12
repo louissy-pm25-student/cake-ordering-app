@@ -11,7 +11,7 @@ class CheckoutScreen extends StatelessWidget {
   const CheckoutScreen(this.vm, {super.key});
   @override
   Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(22),
+    padding: const EdgeInsets.fromLTRB(22, 22, 22, 120),
     children: [
       const PageTitle(
         'The sweetest checkout',
@@ -91,7 +91,7 @@ class CheckoutScreen extends StatelessWidget {
         CheckoutSchedule(vm),
         const Text(
           'Contact / delivery address',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
         gap,
         TextFormField(
@@ -105,7 +105,7 @@ class CheckoutScreen extends StatelessWidget {
         gap,
         const Text(
           'Payment method',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
         Choices(
           const ['cash', 'card', 'online transfer'],

@@ -96,8 +96,10 @@ void main() {
       250,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.tap(find.text('Place demo order · \$57.00'));
+    await tester.drag(find.byType(ListView).first, const Offset(0, -120));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Place demo order · \$57.00'));
+    await tester.pump();
 
     for (var i = 0; i < 200 && vm.busy; i++) {
       await tester.pump(const Duration(milliseconds: 20));

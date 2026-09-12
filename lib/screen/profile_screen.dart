@@ -22,7 +22,7 @@ class ProfileScreen extends StatelessWidget {
           children: [
             Text(
               'Hello, ${vm.profile.name.isEmpty ? 'cake lover' : vm.profile.name}!',
-              style: const TextStyle(fontFamily: 'serif', fontSize: 26),
+              style: const TextStyle(fontFamily: 'serif', fontSize: 23),
             ),
             const Text(
               'There’s always a reason to celebrate.',

@@ -1,8 +1,10 @@
 import 'package:flutter/foundation.dart';
 
 import '../model/local_account.dart';
+import '../model/auth_verification.dart';
 
 import '../data/cake_repository.dart';
+import '../data/verification_service.dart';
 import 'admin/admin_viewmodel.dart';
 import '../model/admin/admin_record.dart';
 import '../model/cake.dart';
@@ -15,13 +17,16 @@ import '../nav/cake_navigation.dart';
 
 class CakeViewModel extends ChangeNotifier {
   final CakeRepository repository;
-  CakeViewModel(this.repository) {
+  CakeViewModel(this.repository, {VerificationService? verificationService})
+    : verificationService =
+          verificationService ?? VerificationService.configured() {
     admin = AdminViewModel(_persistAdmin);
     admin.load({});
     admin.addListener(notifyListeners);
   }
   late final AdminViewModel admin;
-  Future<bool> _persistAdmin(Map<String, dynamic> data) {
+  final VerificationService verificationService;
+  Future<bool> _persistAdmin(Map<String, dynamic> data) async {
     final newCustomerOrder = (data['orders'] as List? ?? []).any(
       (o) =>
           o['source'] == 'online' &&
@@ -29,18 +34,48 @@ class CakeViewModel extends ChangeNotifier {
           email.isNotEmpty &&
           admin.record('orders', '${o['id']}') == null,
     );
-    return _persist({
+    final previousEmails = admin
+        .records('customers')
+        .map((customer) => customer.text('email').trim().toLowerCase())
+        .where((email) => email.isNotEmpty)
+        .toSet();
+    final remainingEmails = (data['customers'] as List? ?? [])
+        .map((customer) => Map<String, dynamic>.from(customer as Map))
+        .where((customer) => customer['deleted'] != true)
+        .map((customer) => '${customer['email'] ?? ''}'.trim().toLowerCase())
+        .where((email) => email.isNotEmpty)
+        .toSet();
+    final removedEmails = previousEmails.difference(remainingEmails);
+    final oldAccounts = List<LocalAccount>.from(_accounts);
+    final oldUserData = Map<String, dynamic>.from(_userData);
+    if (removedEmails.isNotEmpty) {
+      _accounts.removeWhere((account) => removedEmails.contains(account.email));
+      for (final removedEmail in removedEmails) {
+        _userData.remove(removedEmail);
+      }
+    }
+    final saved = await _persist({
       ..._snapshot(cart: newCustomerOrder ? [] : null),
       'admin': data,
-    });
+    }, requireRemote: removedEmails.isNotEmpty);
+    if (!saved && removedEmails.isNotEmpty) {
+      _accounts
+        ..clear()
+        ..addAll(oldAccounts);
+      _userData
+        ..clear()
+        ..addAll(oldUserData);
+    }
+    return saved;
   }
 
   String fulfilment = 'pickup', zone = '', orderNotes = '';
   String fulfilmentDate = dayKey(DateTime.now());
   bool get isAdmin => admin.signedIn;
-  void exitAdmin() {
+  Future<void> exitAdmin() async {
     admin.logout();
     _destination = CakeDestination.home;
+    await _persist(_snapshot());
     notifyListeners();
   }
 
@@ -78,6 +113,11 @@ class CakeViewModel extends ChangeNotifier {
   Cake? _pendingCake;
   CakeDestination _guestPage = CakeDestination.home;
   String? authError;
+  String? authNotice;
+  RegistrationDraft? _registrationDraft;
+  LocalAccount? _resetAccount;
+  VerificationSession? verificationSession;
+  bool get usesDevelopmentVerification => verificationService.isDevelopment;
   bool get isLoggedIn => _account != null;
   String get email => _account?.email ?? '';
   CakeDestination _destination = CakeDestination.home;
@@ -164,6 +204,20 @@ class CakeViewModel extends ChangeNotifier {
       _userData.addAll(Map<String, dynamic>.from(data['users'] as Map? ?? {}));
       admin.load(Map<String, dynamic>.from(data['admin'] as Map? ?? {}));
       admin.importCustomers(_userData, _accounts);
+      final session = Map<String, dynamic>.from(data['session'] as Map? ?? {});
+      final adminUsername = '${session['adminUsername'] ?? ''}';
+      final customerEmail = '${session['customerEmail'] ?? ''}';
+      if (adminUsername.isNotEmpty && admin.restoreSession(adminUsername)) {
+        _destination = CakeDestination.admin;
+      } else if (customerEmail.isNotEmpty) {
+        final account = _accounts
+            .where((candidate) => candidate.email == customerEmail)
+            .firstOrNull;
+        if (account != null) {
+          _restoreCustomer(account);
+          _destination = CakeDestination.home;
+        }
+      }
     } catch (_) {
       error = 'Saved data could not be loaded.';
     }
@@ -173,6 +227,7 @@ class CakeViewModel extends ChangeNotifier {
   Map<String, dynamic> _snapshot({
     List<CartItem>? cart,
     List<CakeOrder>? orders,
+    bool includeSession = true,
   }) {
     final users = Map<String, dynamic>.from(_userData);
     if (_account != null) {
@@ -186,7 +241,43 @@ class CakeViewModel extends ChangeNotifier {
       'admin': admin.toJson(),
       'accounts': _accounts.map((e) => e.toJson()).toList(),
       'users': users,
+      'session': {
+        'customerEmail': includeSession ? email : '',
+        'adminUsername': includeSession && admin.signedIn ? admin.username : '',
+      },
     };
+  }
+
+  void _restoreCustomer(LocalAccount account) {
+    _account = account;
+    final data = Map<String, dynamic>.from(
+      _userData[account.email] as Map? ?? {},
+    );
+    _cart = (data['cart'] as List? ?? [])
+        .map((e) => CartItem.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+    _orders = (data['orders'] as List? ?? [])
+        .map((e) => CakeOrder.fromJson(Map<String, dynamic>.from(e as Map)))
+        .where((e) => e.items.isNotEmpty)
+        .toList();
+    _profile = data['profile'] == null
+        ? UserProfile(name: account.name, phone: account.phone)
+        : UserProfile.fromJson(
+            Map<String, dynamic>.from(data['profile'] as Map),
+          );
+    final directory = admin
+        .records('customers')
+        .where((record) => record.text('email') == account.email)
+        .firstOrNull;
+    if (directory != null) {
+      _profile = UserProfile(
+        name: directory.text('name'),
+        address: directory.text('address'),
+        phone: directory.text('phone').isEmpty
+            ? account.phone
+            : directory.text('phone'),
+      );
+    }
   }
 
   bool _requireLogin(CakeDestination page, {Cake? cake}) {
@@ -225,13 +316,15 @@ class CakeViewModel extends ChangeNotifier {
         _destination = CakeDestination.admin;
         _pendingCake = null;
         _pendingPage = null;
+        await _persist(_snapshot());
       } else {
         authError = 'Username or password is incorrect.';
       }
       notifyListeners();
       return;
     }
-    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(normalized)) {
+    if (name != null &&
+        !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(normalized)) {
       authError = 'Enter a valid email address.';
       notifyListeners();
       return;
@@ -246,14 +339,21 @@ class CakeViewModel extends ChangeNotifier {
     try {
       LocalAccount? account;
       for (final candidate in _accounts) {
-        if (candidate.email == normalized) account = candidate;
+        if (candidate.email == normalized || candidate.username == normalized) {
+          account = candidate;
+        }
       }
       if (name != null) {
         if (account != null) {
           authError = 'This email is already registered. Please log in.';
           return;
         }
-        account = await LocalAccount.create(name.trim(), normalized, password);
+        account = await LocalAccount.create(
+          name.trim(),
+          normalized,
+          password,
+          username: normalized,
+        );
         _accounts.add(account);
         if (!await _persist(_snapshot())) {
           _accounts.remove(account);
@@ -261,38 +361,13 @@ class CakeViewModel extends ChangeNotifier {
           return;
         }
       } else if (account == null || !await account.verify(password)) {
-        authError = 'Email or password is incorrect.';
+        authError = 'Username or password is incorrect.';
         return;
       }
-      _account = account;
-      final data = Map<String, dynamic>.from(
-        _userData[normalized] as Map? ?? {},
-      );
-      _cart = (data['cart'] as List? ?? [])
-          .map((e) => CartItem.fromJson(Map<String, dynamic>.from(e as Map)))
-          .toList();
-      _orders = (data['orders'] as List? ?? [])
-          .map((e) => CakeOrder.fromJson(Map<String, dynamic>.from(e as Map)))
-          .where((e) => e.items.isNotEmpty)
-          .toList();
-      _profile = data['profile'] == null
-          ? UserProfile(name: account.name)
-          : UserProfile.fromJson(
-              Map<String, dynamic>.from(data['profile'] as Map),
-            );
-      final directory = admin
-          .records('customers')
-          .where((r) => r.text('email') == normalized)
-          .firstOrNull;
-      if (directory != null) {
-        _profile = UserProfile(
-          name: directory.text('name'),
-          address: directory.text('address'),
-          phone: directory.text('phone'),
-        );
-      }
+      _restoreCustomer(account);
+      final customerEmail = account.email;
       await admin.syncCustomer(
-        normalized,
+        customerEmail,
         _profile.name,
         _profile.address,
         _profile.phone,
@@ -312,6 +387,241 @@ class CakeViewModel extends ChangeNotifier {
     }
   }
 
+  Future<bool> beginRegistration({
+    required String name,
+    required String username,
+    required String email,
+    required String phone,
+    required String gender,
+    required String password,
+    required String confirmPassword,
+    required VerificationChannel channel,
+  }) async {
+    if (busy) return false;
+    authError = null;
+    authNotice = null;
+    final cleanName = name.trim();
+    final cleanUsername = username.trim().toLowerCase();
+    final cleanEmail = email.trim().toLowerCase();
+    final cleanPhone = normalizeMalaysiaMobile(phone);
+    if (cleanName.isEmpty) return _authFail('Enter your full name.');
+    if (!RegExp(r'^[a-z0-9_.-]{3,30}$').hasMatch(cleanUsername)) {
+      return _authFail(
+        'Username must be 3–30 letters, numbers, dots, underscores or hyphens.',
+      );
+    }
+    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(cleanEmail)) {
+      return _authFail('Enter a valid email address.');
+    }
+    if (cleanPhone == null) {
+      return _authFail('Enter a valid Malaysian mobile number.');
+    }
+    if (gender.isEmpty) return _authFail('Select your gender.');
+    if (password.length < 8) {
+      return _authFail('Use at least 8 characters for your password.');
+    }
+    if (password != confirmPassword) {
+      return _authFail('Passwords do not match.');
+    }
+    if (admin.hasUsername(cleanUsername) ||
+        _accounts.any(
+          (a) =>
+              a.username == cleanUsername ||
+              a.email == cleanEmail ||
+              a.phone == cleanPhone,
+        )) {
+      return _authFail(
+        'That username, email or phone number is already registered.',
+      );
+    }
+    _registrationDraft = RegistrationDraft(
+      name: cleanName,
+      username: cleanUsername,
+      email: cleanEmail,
+      phone: cleanPhone,
+      gender: gender,
+      password: password,
+    );
+    return _sendVerification(
+      channel: channel,
+      purpose: VerificationPurpose.registration,
+      destination: channel == VerificationChannel.email
+          ? cleanEmail
+          : cleanPhone,
+    );
+  }
+
+  Future<bool> beginPasswordReset({
+    required String username,
+    required VerificationChannel channel,
+  }) async {
+    if (busy) return false;
+    authError = null;
+    authNotice = null;
+    final value = username.trim().toLowerCase();
+    _resetAccount = _accounts
+        .where((a) => a.username == value || a.email == value)
+        .firstOrNull;
+    if (_resetAccount == null) {
+      return _authFail('No customer account matches that username or email.');
+    }
+    final destination = channel == VerificationChannel.email
+        ? _resetAccount!.email
+        : _resetAccount!.phone;
+    if (destination.isEmpty) {
+      return _authFail('This account does not have that recovery method.');
+    }
+    return _sendVerification(
+      channel: channel,
+      purpose: VerificationPurpose.passwordReset,
+      destination: destination,
+    );
+  }
+
+  Future<bool> _sendVerification({
+    required VerificationChannel channel,
+    required VerificationPurpose purpose,
+    required String destination,
+  }) async {
+    busy = true;
+    notifyListeners();
+    try {
+      verificationSession = await verificationService.sendCode(
+        channel: channel,
+        purpose: purpose,
+        destination: destination,
+      );
+      _destination = CakeDestination.verifyAccount;
+      return true;
+    } catch (_) {
+      return _authFail(
+        'The verification code could not be sent. Please retry.',
+      );
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> resendVerification() async {
+    final session = verificationSession;
+    final draft = _registrationDraft;
+    final reset = _resetAccount;
+    if (session == null) return _authFail('Start verification again.');
+    final destination = session.purpose == VerificationPurpose.registration
+        ? (session.channel == VerificationChannel.email
+              ? draft?.email
+              : draft?.phone)
+        : (session.channel == VerificationChannel.email
+              ? reset?.email
+              : reset?.phone);
+    if (destination == null || destination.isEmpty) {
+      return _authFail('Start verification again.');
+    }
+    return _sendVerification(
+      channel: session.channel,
+      purpose: session.purpose,
+      destination: destination,
+    );
+  }
+
+  Future<bool> verifyAuthenticationCode(String code) async {
+    if (busy || verificationSession == null) return false;
+    if (!RegExp(r'^\d{6}$').hasMatch(code.trim())) {
+      return _authFail('Enter the 6-digit verification code.');
+    }
+    busy = true;
+    authError = null;
+    notifyListeners();
+    try {
+      final verified = await verificationService.verifyCode(
+        verificationSession!,
+        code,
+      );
+      if (!verified) {
+        return _authFail('The verification code is incorrect or expired.');
+      }
+      if (verificationSession!.purpose == VerificationPurpose.passwordReset) {
+        verificationSession = null;
+        _destination = CakeDestination.resetPassword;
+        return true;
+      }
+      final draft = _registrationDraft!;
+      final account = await LocalAccount.create(
+        draft.name,
+        draft.email,
+        draft.password,
+        username: draft.username,
+        phone: draft.phone,
+        gender: draft.gender,
+      );
+      _accounts.add(account);
+      if (!await _persist(_snapshot())) {
+        _accounts.remove(account);
+        return _authFail('Registration could not be saved. Please retry.');
+      }
+      _registrationDraft = null;
+      verificationSession = null;
+      authNotice = 'Account verified. Log in with your username and password.';
+      _destination = CakeDestination.login;
+      return true;
+    } catch (_) {
+      return _authFail('Verification could not be completed. Please retry.');
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> resetPassword(String password, String confirmPassword) async {
+    if (busy || _resetAccount == null) return false;
+    if (password.length < 8) {
+      return _authFail('Use at least 8 characters for your password.');
+    }
+    if (password != confirmPassword) {
+      return _authFail('Passwords do not match.');
+    }
+    busy = true;
+    authError = null;
+    notifyListeners();
+    final old = _resetAccount!;
+    try {
+      final replacement = await old.withPassword(password);
+      final index = _accounts.indexOf(old);
+      _accounts[index] = replacement;
+      if (!await _persist(_snapshot())) {
+        _accounts[index] = old;
+        return _authFail('The new password could not be saved. Please retry.');
+      }
+      _resetAccount = null;
+      authNotice = 'Password updated. Log in with your new password.';
+      _destination = CakeDestination.login;
+      return true;
+    } catch (_) {
+      return _authFail('The new password could not be saved. Please retry.');
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  bool _authFail(String message) {
+    authError = message;
+    notifyListeners();
+    return false;
+  }
+
+  void cancelAuthenticationFlow() {
+    if (busy) return;
+    verificationSession = null;
+    _registrationDraft = null;
+    _resetAccount = null;
+    authError = null;
+    authNotice = null;
+    _destination = CakeDestination.login;
+    notifyListeners();
+  }
+
   void cancelLogin() {
     if (busy) return;
     _pendingCake = null;
@@ -325,7 +635,7 @@ class CakeViewModel extends ChangeNotifier {
     if (busy) return;
     busy = true;
     notifyListeners();
-    final snapshot = _snapshot();
+    final snapshot = _snapshot(includeSession: false);
     if (await _persist(snapshot)) {
       _userData.clear();
       _userData.addAll(Map<String, dynamic>.from(snapshot['users'] as Map));
@@ -345,8 +655,13 @@ class CakeViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> _persist(Map<String, dynamic> data) {
-    final operation = _writes.then((_) => repository.save(data));
+  Future<bool> _persist(
+    Map<String, dynamic> data, {
+    bool requireRemote = false,
+  }) {
+    final operation = _writes.then(
+      (_) => repository.save(data, requireRemote: requireRemote),
+    );
     _writes = operation.catchError((Object _) {});
     return operation.then((_) => true).catchError((Object _) {
       error = 'Could not save changes. Please try again.';
@@ -373,8 +688,18 @@ class CakeViewModel extends ChangeNotifier {
   }
 
   void goBack() {
-    if (_destination == CakeDestination.login ||
-        _destination == CakeDestination.register) {
+    if ({
+      CakeDestination.login,
+      CakeDestination.register,
+      CakeDestination.verifyAccount,
+      CakeDestination.forgotPassword,
+      CakeDestination.resetPassword,
+    }.contains(_destination)) {
+      if (_destination != CakeDestination.login &&
+          _destination != CakeDestination.register) {
+        cancelAuthenticationFlow();
+        return;
+      }
       cancelLogin();
       return;
     }
